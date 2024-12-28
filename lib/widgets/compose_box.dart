@@ -967,28 +967,37 @@ class _AttachGlobalTimeButton extends _AttachUploadsButton {
 
   @override
   Future<Iterable<_File>> getFiles(BuildContext context) async {
+    // Store the context's mounted status before async operations
+    final BuildContext currentContext = context;
+
     // Request a date and time from the user.
     final DateTime? pickedDate = await showDatePicker(
-      context: context,
+      context: currentContext,
       initialDate: DateTime.now(),
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
     );
+
+    // Check if the widget is still mounted before continuing
+    if (!currentContext.mounted) return [];
 
     if (pickedDate == null) {
       return []; // User canceled, no action needed.
     }
 
     final TimeOfDay? pickedTime = await showTimePicker(
-      context: context,
+      context: currentContext,
       initialTime: TimeOfDay.now(),
     );
+
+    // Check mounted status again after second async operation
+    if (!currentContext.mounted) return [];
 
     if (pickedTime == null) {
       return []; // User canceled, no action needed.
     }
 
-    // Combine the picked date and time.
+    // Rest of the code remains the same
     final DateTime fullDateTime = DateTime(
       pickedDate.year,
       pickedDate.month,
@@ -997,14 +1006,12 @@ class _AttachGlobalTimeButton extends _AttachUploadsButton {
       pickedTime.minute,
     );
 
-    // Format the date-time for the new markup.
     final String timeMarkup =
         "<time:${DateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'").format(fullDateTime.toUtc())}>";
 
-    // Insert the markup string into the content controller.
     controller.content.text += timeMarkup;
 
-    return []; // No actual files, as this feature only modifies the text content.
+    return [];
   }
 }
 
