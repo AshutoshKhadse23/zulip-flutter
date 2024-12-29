@@ -684,5 +684,9 @@
   "composeBoxAttachGlobalTimeTooltip": "Attach a global time",
   "@composeBoxAttachGlobalTimeTooltip": {
   "description": "Tooltip for the button to attach a global time to the compose box."
+  },
+  "actionSheetOptionMarkStreamAsRead": "Mark stream as read",
+  "@actionSheetOptionMarkStreamAsRead": {
+    "description": "Option text for marking a stream as read in an action sheet."
   }
 }

@@ -540,4 +540,7 @@ class ZulipLocalizationsRu extends ZulipLocalizations {
 
   @override
   String get composeBoxAttachGlobalTimeTooltip => 'Attach a global time';
+
+  @override
+  String get actionSheetOptionMarkStreamAsRead => 'Mark stream as read';
 }

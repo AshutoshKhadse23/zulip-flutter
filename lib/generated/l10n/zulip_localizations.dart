@@ -1020,6 +1020,12 @@ abstract class ZulipLocalizations {
   /// In en, this message translates to:
   /// **'Attach a global time'**
   String get composeBoxAttachGlobalTimeTooltip;
+
+  /// Option text for marking a stream as read in an action sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Mark stream as read'**
+  String get actionSheetOptionMarkStreamAsRead;
 }
 
 class _ZulipLocalizationsDelegate extends LocalizationsDelegate<ZulipLocalizations> {
