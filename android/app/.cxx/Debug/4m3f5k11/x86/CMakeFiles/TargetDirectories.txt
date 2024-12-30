@@ -1,0 +1,2 @@
+/Users/ashutoshkhadse/zulip-flutter/android/app/.cxx/Debug/4m3f5k11/x86/CMakeFiles/edit_cache.dir
+/Users/ashutoshkhadse/zulip-flutter/android/app/.cxx/Debug/4m3f5k11/x86/CMakeFiles/rebuild_cache.dir
