@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../generated/l10n/zulip_localizations.dart';
 import '../model/narrow.dart';
+import 'about_zulip.dart';
 import 'action_sheet.dart';
 import 'app.dart';
 import 'app_bar.dart';
@@ -30,7 +31,7 @@ enum _HomePageTab {
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
-  static Route<void> buildRoute({required int accountId}) {
+  static AccountRoute<void> buildRoute({required int accountId}) {
     return MaterialAccountWidgetRoute(accountId: accountId,
       loadingPlaceholderPage: _LoadingPlaceholderPage(accountId: accountId),
       page: const HomePage());
@@ -150,6 +151,11 @@ const kTryAnotherAccountWaitPeriod = Duration(seconds: 5);
 class _LoadingPlaceholderPage extends StatefulWidget {
   const _LoadingPlaceholderPage({required this.accountId});
 
+  /// The relevant account for this page.
+  ///
+  /// The account is not guaranteed to exist in the global store. This can
+  /// happen briefly when the account is removed from the database for logout,
+  /// but before [PerAccountStoreWidget.routeToRemoveOnLogout] is processed.
   final int accountId;
 
   @override
@@ -179,8 +185,15 @@ class _LoadingPlaceholderPageState extends State<_LoadingPlaceholderPage> {
   @override
   Widget build(BuildContext context) {
     final zulipLocalizations = ZulipLocalizations.of(context);
-    final realmUrl = GlobalStoreWidget.of(context)
-      .getAccount(widget.accountId)!.realmUrl;
+    final account = GlobalStoreWidget.of(context).getAccount(widget.accountId);
+
+    if (account == null) {
+      // We should only reach this state very briefly.
+      // See [_LoadingPlaceholderPage.accountId].
+      return Scaffold(
+        appBar: AppBar(),
+        body: const SizedBox.shrink());
+    }
 
     return Scaffold(
       appBar: AppBar(),
@@ -199,7 +212,7 @@ class _LoadingPlaceholderPageState extends State<_LoadingPlaceholderPage> {
                 child: Column(
                   children: [
                     const SizedBox(height: 16),
-                    Text(zulipLocalizations.tryAnotherAccountMessage(realmUrl.toString())),
+                    Text(zulipLocalizations.tryAnotherAccountMessage(account.realmUrl.toString())),
                     const SizedBox(height: 8),
                     ElevatedButton(
                       onPressed: () => Navigator.push(context,
@@ -269,6 +282,7 @@ void _showMainMenu(BuildContext context, {
     // TODO(#97): Settings
     // TODO(#661): Notifications
     // const SizedBox(height: 8),
+    const _AboutZulipButton(),
     // TODO(#1095): VersionInfo
   ];
 
@@ -553,6 +567,23 @@ class _SwitchAccountButton extends _MenuButton {
   @override
   void onPressed(BuildContext context) {
     Navigator.of(context).push(MaterialWidgetRoute(page: const ChooseAccountPage()));
+  }
+}
+
+class _AboutZulipButton extends _MenuButton {
+  const _AboutZulipButton();
+
+  @override
+  IconData get icon => ZulipIcons.info;
+
+  @override
+  String label(ZulipLocalizations zulipLocalizations) {
+    return zulipLocalizations.aboutPageTitle;
+  }
+
+  @override
+  void onPressed(BuildContext context) {
+    Navigator.of(context).push(AboutZulipPage.buildRoute(context));
   }
 }
 

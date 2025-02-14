@@ -24,6 +24,7 @@ import 'emoji_reaction.dart';
 import 'icons.dart';
 import 'inset_shadow.dart';
 import 'message_list.dart';
+import 'page.dart';
 import 'store.dart';
 import 'text.dart';
 import 'theme.dart';
@@ -64,6 +65,20 @@ void _showActionSheet(
     });
 }
 
+/// A button in an action sheet.
+///
+/// When built from server data, the action sheet ignores changes in that data;
+/// we intentionally don't live-update the buttons on events.
+/// If a button's label, action, or position changes suddenly,
+/// it can be confusing and make the on-tap behavior unexpected.
+/// Better to let the user decide to tap
+/// based on information that's comfortably in their working memory,
+/// even if we sometimes have to explain (where we handle the tap)
+/// that that information has changed and they need to decide again.
+///
+/// (Even if we did live-update the buttons, it's possible anyway that a user's
+/// action can race with a change that's already been applied on the server,
+/// because it takes some time for the server to report changes to us.)
 abstract class ActionSheetMenuItemButton extends StatelessWidget {
   const ActionSheetMenuItemButton({super.key, required this.pageContext});
 
@@ -149,83 +164,75 @@ class ActionSheetCancelButton extends StatelessWidget {
 }
 
 /// Show a sheet of actions you can take on a topic.
+///
+/// Needs a [PageRoot] ancestor.
+///
+/// The API request for resolving/unresolving a topic needs a message ID.
+/// If [someMessageIdInTopic] is null, the button for that will be absent.
 void showTopicActionSheet(BuildContext context, {
   required int channelId,
-  required String topic,
+  required TopicName topic,
+  required int? someMessageIdInTopic,
 }) {
-  final narrow = TopicNarrow(channelId, topic);
-  UserTopicUpdateButton button({
-    UserTopicVisibilityPolicy? from,
-    required UserTopicVisibilityPolicy to,
-  }) {
-    return UserTopicUpdateButton(
-      currentVisibilityPolicy: from,
-      newVisibilityPolicy: to,
-      narrow: narrow,
-      pageContext: context);
-  }
+  final pageContext = PageRoot.contextOf(context);
 
-  final mute =                 button(to:   UserTopicVisibilityPolicy.muted);
-  final unmute =               button(from: UserTopicVisibilityPolicy.muted,
-                                      to:   UserTopicVisibilityPolicy.none);
-  final unmuteInMutedChannel = button(to:   UserTopicVisibilityPolicy.unmuted);
-  final follow =               button(to:   UserTopicVisibilityPolicy.followed);
-  final unfollow =             button(from: UserTopicVisibilityPolicy.followed,
-                                      to:   UserTopicVisibilityPolicy.none);
+  final store = PerAccountStoreWidget.of(pageContext);
+  final subscription = store.subscriptions[channelId];
 
-  final store = PerAccountStoreWidget.of(context);
-  final channelMuted = store.subscriptions[channelId]?.isMuted;
-  final visibilityPolicy = store.topicVisibilityPolicy(channelId, topic);
+  final optionButtons = <ActionSheetMenuItemButton>[];
 
   // TODO(server-7): simplify this condition away
   final supportsUnmutingTopics = store.connection.zulipFeatureLevel! >= 170;
   // TODO(server-8): simplify this condition away
   final supportsFollowingTopics = store.connection.zulipFeatureLevel! >= 219;
 
-  final optionButtons = <ActionSheetMenuItemButton>[];
-  if (channelMuted != null && !channelMuted) {
+  final visibilityOptions = <UserTopicVisibilityPolicy>[];
+  final visibilityPolicy = store.topicVisibilityPolicy(channelId, topic);
+  if (subscription == null) {
+    // Not subscribed to the channel; there is no user topic change to be made.
+  } else if (!subscription.isMuted) {
     // Channel is subscribed and not muted.
     switch (visibilityPolicy) {
       case UserTopicVisibilityPolicy.muted:
-        optionButtons.add(unmute);
+        visibilityOptions.add(UserTopicVisibilityPolicy.none);
         if (supportsFollowingTopics) {
-          optionButtons.add(follow);
+          visibilityOptions.add(UserTopicVisibilityPolicy.followed);
         }
       case UserTopicVisibilityPolicy.none:
       case UserTopicVisibilityPolicy.unmuted:
-        optionButtons.add(mute);
+        visibilityOptions.add(UserTopicVisibilityPolicy.muted);
         if (supportsFollowingTopics) {
-          optionButtons.add(follow);
+          visibilityOptions.add(UserTopicVisibilityPolicy.followed);
         }
       case UserTopicVisibilityPolicy.followed:
-        optionButtons.add(mute);
+        visibilityOptions.add(UserTopicVisibilityPolicy.muted);
         if (supportsFollowingTopics) {
-          optionButtons.add(unfollow);
+          visibilityOptions.add(UserTopicVisibilityPolicy.none);
         }
       case UserTopicVisibilityPolicy.unknown:
         // TODO(#1074): This should be unreachable as we keep `unknown` out of
         //   our data structures.
         assert(false);
     }
-  } else if (channelMuted != null && channelMuted) {
+  } else {
     // Channel is muted.
     if (supportsUnmutingTopics) {
       switch (visibilityPolicy) {
         case UserTopicVisibilityPolicy.none:
         case UserTopicVisibilityPolicy.muted:
-          optionButtons.add(unmuteInMutedChannel);
+          visibilityOptions.add(UserTopicVisibilityPolicy.unmuted);
           if (supportsFollowingTopics) {
-            optionButtons.add(follow);
+            visibilityOptions.add(UserTopicVisibilityPolicy.followed);
           }
         case UserTopicVisibilityPolicy.unmuted:
-          optionButtons.add(mute);
+          visibilityOptions.add(UserTopicVisibilityPolicy.muted);
           if (supportsFollowingTopics) {
-            optionButtons.add(follow);
+            visibilityOptions.add(UserTopicVisibilityPolicy.followed);
           }
         case UserTopicVisibilityPolicy.followed:
-          optionButtons.add(mute);
+          visibilityOptions.add(UserTopicVisibilityPolicy.muted);
           if (supportsFollowingTopics) {
-            optionButtons.add(unfollow);
+            visibilityOptions.add(UserTopicVisibilityPolicy.none);
           }
         case UserTopicVisibilityPolicy.unknown:
           // TODO(#1074): This should be unreachable as we keep `unknown` out of
@@ -233,8 +240,19 @@ void showTopicActionSheet(BuildContext context, {
           assert(false);
       }
     }
-  } else {
-    // Not subscribed to the channel; there is no user topic change to be made.
+  }
+  optionButtons.addAll(visibilityOptions.map((to) {
+    return UserTopicUpdateButton(
+      currentVisibilityPolicy: visibilityPolicy,
+      newVisibilityPolicy: to,
+      narrow: TopicNarrow(channelId, topic),
+      pageContext: pageContext);
+  }));
+
+  if (someMessageIdInTopic != null) {
+    optionButtons.add(ResolveUnresolveButton(pageContext: pageContext,
+      topic: topic,
+      someMessageIdInTopic: someMessageIdInTopic));
   }
 
   if (optionButtons.isEmpty) {
@@ -247,19 +265,19 @@ void showTopicActionSheet(BuildContext context, {
     return;
   }
 
-  _showActionSheet(context, optionButtons: optionButtons);
+  _showActionSheet(pageContext, optionButtons: optionButtons);
 }
 
 class UserTopicUpdateButton extends ActionSheetMenuItemButton {
   const UserTopicUpdateButton({
     super.key,
-    this.currentVisibilityPolicy,
+    required this.currentVisibilityPolicy,
     required this.newVisibilityPolicy,
     required this.narrow,
     required super.pageContext,
   });
 
-  final UserTopicVisibilityPolicy? currentVisibilityPolicy;
+  final UserTopicVisibilityPolicy currentVisibilityPolicy;
   final UserTopicVisibilityPolicy newVisibilityPolicy;
   final TopicNarrow narrow;
 
@@ -369,18 +387,93 @@ class UserTopicUpdateButton extends ActionSheetMenuItemButton {
   }
 }
 
+class ResolveUnresolveButton extends ActionSheetMenuItemButton {
+  ResolveUnresolveButton({
+    super.key,
+    required this.topic,
+    required this.someMessageIdInTopic,
+    required super.pageContext,
+  }) : _actionIsResolve = !topic.isResolved;
+
+  /// The topic that the action sheet was opened for.
+  ///
+  /// There might not currently be any messages with this topic;
+  /// see dartdoc of [ActionSheetMenuItemButton].
+  final TopicName topic;
+
+  /// The message ID that was passed when opening the action sheet.
+  ///
+  /// The message with this ID might currently not exist,
+  /// or might exist with a different topic;
+  /// see dartdoc of [ActionSheetMenuItemButton].
+  final int someMessageIdInTopic;
+
+  final bool _actionIsResolve;
+
+  @override
+  IconData get icon => _actionIsResolve ? ZulipIcons.check : ZulipIcons.check_remove;
+
+  @override
+  String label(ZulipLocalizations zulipLocalizations) {
+    return _actionIsResolve
+      ? zulipLocalizations.actionSheetOptionResolveTopic
+      : zulipLocalizations.actionSheetOptionUnresolveTopic;
+  }
+
+  @override void onPressed() async {
+    final zulipLocalizations = ZulipLocalizations.of(pageContext);
+    final store = PerAccountStoreWidget.of(pageContext);
+
+    // We *could* check here if the topic has changed since the action sheet was
+    // opened (see dartdoc of [ActionSheetMenuItemButton]) and abort if so.
+    // We simplify by not doing so.
+    // There's already an inherent race that that check wouldn't help with:
+    // when you tap the button, an intervening topic change may already have
+    // happened, just not reached us in an event yet.
+    // Discussion, including about what web does:
+    //   https://github.com/zulip/zulip-flutter/pull/1301#discussion_r1936181560
+
+    try {
+      await updateMessage(store.connection,
+        messageId: someMessageIdInTopic,
+        topic: _actionIsResolve ? topic.resolve() : topic.unresolve(),
+        propagateMode: PropagateMode.changeAll,
+        sendNotificationToOldThread: false,
+        sendNotificationToNewThread: true,
+      );
+    } catch (e) {
+      if (!pageContext.mounted) return;
+
+      String? errorMessage;
+      switch (e) {
+        case ZulipApiException():
+          errorMessage = e.message;
+          // TODO(#741) specific messages for common errors, like network errors
+          //   (support with reusable code)
+        default:
+      }
+
+      final title = _actionIsResolve
+        ? zulipLocalizations.errorResolveTopicFailedTitle
+        : zulipLocalizations.errorUnresolveTopicFailedTitle;
+      showErrorDialog(context: pageContext, title: title, message: errorMessage);
+    }
+  }
+}
+
 /// Show a sheet of actions you can take on a message in the message list.
 ///
 /// Must have a [MessageListPage] ancestor.
 void showMessageActionSheet({required BuildContext context, required Message message}) {
-  final store = PerAccountStoreWidget.of(context);
+  final pageContext = PageRoot.contextOf(context);
+  final store = PerAccountStoreWidget.of(pageContext);
 
   // The UI that's conditioned on this won't live-update during this appearance
   // of the action sheet (we avoid calling composeBoxControllerOf in a build
   // method; see its doc).
   // So we rely on the fact that isComposeBoxOffered for any given message list
   // will be constant through the page's life.
-  final messageListPage = MessageListPage.ancestorOf(context);
+  final messageListPage = MessageListPage.ancestorOf(pageContext);
   final isComposeBoxOffered = messageListPage.composeBoxController != null;
 
   final isMessageRead = message.flags.contains(MessageFlag.read);
@@ -388,18 +481,18 @@ void showMessageActionSheet({required BuildContext context, required Message mes
   final showMarkAsUnreadButton = markAsUnreadSupported && isMessageRead;
 
   final optionButtons = [
-    ReactionButtons(message: message, pageContext: context),
-    StarButton(message: message, pageContext: context),
+    ReactionButtons(message: message, pageContext: pageContext),
+    StarButton(message: message, pageContext: pageContext),
     if (isComposeBoxOffered)
-      QuoteAndReplyButton(message: message, pageContext: context),
+      QuoteAndReplyButton(message: message, pageContext: pageContext),
     if (showMarkAsUnreadButton)
-      MarkAsUnreadButton(message: message, pageContext: context),
-    CopyMessageTextButton(message: message, pageContext: context),
-    CopyMessageLinkButton(message: message, pageContext: context),
-    ShareButton(message: message, pageContext: context),
+      MarkAsUnreadButton(message: message, pageContext: pageContext),
+    CopyMessageTextButton(message: message, pageContext: pageContext),
+    CopyMessageLinkButton(message: message, pageContext: pageContext),
+    ShareButton(message: message, pageContext: pageContext),
   ];
 
-  _showActionSheet(context, optionButtons: optionButtons);
+  _showActionSheet(pageContext, optionButtons: optionButtons);
 }
 
 abstract class MessageActionSheetMenuItemButton extends ActionSheetMenuItemButton {
@@ -644,6 +737,7 @@ class QuoteAndReplyButton extends MessageActionSheetMenuItemButton {
 
   @override void onPressed() async {
     final zulipLocalizations = ZulipLocalizations.of(pageContext);
+    final message = this.message;
 
     var composeBoxController = findMessageListPage().composeBoxController;
     // The compose box doesn't null out its controller; it's either always null
@@ -655,13 +749,15 @@ class QuoteAndReplyButton extends MessageActionSheetMenuItemButton {
       && composeBoxController.topic.textNormalized == kNoTopicTopic
       && message is StreamMessage
     ) {
-      composeBoxController.topic.value = TextEditingValue(text: message.topic);
+      composeBoxController.topic.setTopic(message.topic);
     }
 
     // This inserts a "[Quoting…]" placeholder into the content input,
     // giving the user a form of progress feedback.
     final tag = composeBoxController.content
-      .registerQuoteAndReplyStart(PerAccountStoreWidget.of(pageContext),
+      .registerQuoteAndReplyStart(
+        zulipLocalizations,
+        PerAccountStoreWidget.of(pageContext),
         message: message,
       );
 
