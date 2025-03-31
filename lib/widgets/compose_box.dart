@@ -460,7 +460,20 @@ class _StreamContentInputState extends State<_StreamContentInput> {
   void initState() {
     super.initState();
     _topicTextNormalized = widget.controller.topic.textNormalized;
-    widget.controller.topic.addListener(_topicChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _manageInitialFocus();
+    });
+  }
+
+  void _manageInitialFocus() {
+    if (widget.controller.topic.text.isEmpty) {
+      // Delay slightly to ensure safe focus change
+      Future.delayed(const Duration(milliseconds: 50), () {
+        if (mounted && !widget.controller.contentFocusNode.hasFocus) {
+          widget.controller.topicFocusNode.requestFocus();
+        }
+      });
+    }
   }
 
   @override
