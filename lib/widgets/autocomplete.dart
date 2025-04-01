@@ -58,13 +58,7 @@ class _AutocompleteFieldState<QueryT extends AutocompleteQuery, ResultT extends 
         _initViewModel(newQuery);
       } else {
         assert(_viewModel!.acceptsQuery(newQuery));
-        final oldQuery = _viewModel!.query;
         _viewModel!.query = newQuery;
-        // Reset scroll when query content changes
-        if (oldQuery.toString() != newQuery.toString() &&
-            _scrollController.hasClients) {
-          _scrollController.jumpTo(0);
-        }
       }
     }
   }
