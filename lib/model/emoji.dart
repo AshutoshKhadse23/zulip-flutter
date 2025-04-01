@@ -1,6 +1,6 @@
 import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
-
+import 'package:diacritic/diacritic.dart';
 import '../api/model/events.dart';
 import '../api/model/initial_snapshot.dart';
 import '../api/model/model.dart';
@@ -413,6 +413,16 @@ enum EmojiMatchQuality {
   }
 }
 
+extension EmojiMatchExtensions on EmojiCandidate {
+  bool matchesQuery(String query) {
+    final cleanQuery = query.cleanForEmojiMatch();
+    final cleanName = emojiName.cleanForEmojiMatch();
+
+    return cleanName.contains(cleanQuery) ||
+        aliases.any((a) => a.cleanForEmojiMatch().contains(cleanQuery));
+  }
+}
+
 class EmojiAutocompleteView extends AutocompleteView<EmojiAutocompleteQuery, EmojiAutocompleteResult> {
   EmojiAutocompleteView._({required super.store, required super.query});
 
@@ -428,16 +438,22 @@ class EmojiAutocompleteView extends AutocompleteView<EmojiAutocompleteQuery, Emo
   @override
   Future<List<EmojiAutocompleteResult>?> computeResults() async {
     final unsorted = <EmojiAutocompleteResult>[];
-    if (await filterCandidates(filter: _testCandidate,
-          candidates: store.allEmojiCandidates(), results: unsorted)) {
+    if (await filterCandidates(
+        filter: (query, candidate) => query.testCandidate(candidate),
+        candidates: store.allEmojiCandidates(),
+        results: unsorted
+    )) {
       return null;
     }
     return bucketSort(unsorted,
-      (r) => r.rank, numBuckets: EmojiAutocompleteQuery._numResultRanks);
+            (r) => r.rank, numBuckets: EmojiAutocompleteQuery._numResultRanks);
   }
 
-  static EmojiAutocompleteResult? _testCandidate(EmojiAutocompleteQuery query, EmojiCandidate candidate) {
-    return query.testCandidate(candidate);
+}
+
+extension StringProcessing on String {
+  String cleanForEmojiMatch() {
+    return removeDiacritics(toLowerCase()).replaceAll(' ', '_');
   }
 }
 
@@ -461,7 +477,7 @@ class EmojiAutocompleteQuery extends ComposeAutocompleteQuery {
   static const _separator = '_';
 
   static String _adjustQuery(String raw) {
-    return raw.toLowerCase().replaceAll(' ', '_'); // TODO(#1067) remove diacritics too
+    return raw.cleanForEmojiMatch();
   }
 
   @override
@@ -473,17 +489,15 @@ class EmojiAutocompleteQuery extends ComposeAutocompleteQuery {
   EmojiAutocompleteResult? testCandidate(EmojiCandidate candidate) {
     final matchQuality = match(candidate);
     if (matchQuality == null) return null;
-    return EmojiAutocompleteResult(candidate,
-      _rankResult(matchQuality, candidate));
+    return EmojiAutocompleteResult(candidate, _rankResult(matchQuality, candidate));
   }
 
-  // Compare get_emoji_matcher in Zulip web:shared/src/typeahead.ts .
   @visibleForTesting
   EmojiMatchQuality? match(EmojiCandidate candidate) {
     if (_adjusted == '') return EmojiMatchQuality.prefix;
 
     if (candidate.emojiDisplay case UnicodeEmojiDisplay(:var emojiUnicode)) {
-      if (_adjusted == emojiUnicode) {
+      if (_adjusted == emojiUnicode.cleanForEmojiMatch()) {
         return EmojiMatchQuality.exact;
       }
     }
@@ -504,18 +518,16 @@ class EmojiAutocompleteQuery extends ComposeAutocompleteQuery {
     // See also commentary in [_rankResult].
 
     // TODO(#1067) this assumes emojiName is already lower-case (and no diacritics)
-    if (emojiName == _adjusted)           return EmojiMatchQuality.exact;
-    if (emojiName.startsWith(_adjusted))  return EmojiMatchQuality.prefix;
-    if (emojiName.contains(_sepAdjusted)) return EmojiMatchQuality.wordAligned;
+    final cleanName = emojiName.cleanForEmojiMatch();
+    if (cleanName == _adjusted)           return EmojiMatchQuality.exact;
+    if (cleanName.startsWith(_adjusted))  return EmojiMatchQuality.prefix;
+    if (cleanName.contains(_sepAdjusted)) return EmojiMatchQuality.wordAligned;
     if (!_adjusted.contains(_separator)) {
-      // If the query is a single token (doesn't contain a separator),
-      // allow a match anywhere in the string, too.
-      if (emojiName.contains(_adjusted))  return EmojiMatchQuality.other;
-    } else {
-      // Otherwise, require at least a word-aligned match.
+      if (cleanName.contains(_adjusted))  return EmojiMatchQuality.other;
     }
     return null;
   }
+
 
   /// A measure of the result's quality in the context of the query,
   /// ranked from 0 (best) to one less than [_numResultRanks].
