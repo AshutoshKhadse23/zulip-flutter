@@ -622,6 +622,9 @@ UserTopicEvent userTopicEvent(
   );
 }
 
+MessageEvent messageEvent(Message message) =>
+  MessageEvent(id: 0, message: message, localMessageId: null);
+
 DeleteMessageEvent deleteMessageEvent(List<StreamMessage> messages) {
   assert(messages.isNotEmpty);
   final streamId = messages.first.streamId;
@@ -913,6 +916,8 @@ InitialSnapshot initialSnapshot({
   RealmWildcardMentionPolicy? realmWildcardMentionPolicy,
   bool? realmMandatoryTopics,
   int? realmWaitingPeriodThreshold,
+  bool? realmAllowMessageEditing,
+  int? realmMessageContentEditLimitSeconds,
   Map<String, RealmDefaultExternalAccount>? realmDefaultExternalAccounts,
   int? maxFileUploadSizeMib,
   Uri? serverEmojiDataUrl,
@@ -950,6 +955,8 @@ InitialSnapshot initialSnapshot({
     realmWildcardMentionPolicy: realmWildcardMentionPolicy ?? RealmWildcardMentionPolicy.everyone,
     realmMandatoryTopics: realmMandatoryTopics ?? true,
     realmWaitingPeriodThreshold: realmWaitingPeriodThreshold ?? 0,
+    realmAllowMessageEditing: realmAllowMessageEditing ?? true,
+    realmMessageContentEditLimitSeconds: realmMessageContentEditLimitSeconds ?? 600,
     realmDefaultExternalAccounts: realmDefaultExternalAccounts ?? {},
     maxFileUploadSizeMib: maxFileUploadSizeMib ?? 25,
     serverEmojiDataUrl: serverEmojiDataUrl

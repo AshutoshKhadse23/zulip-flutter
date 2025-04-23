@@ -3,6 +3,29 @@
 ## Unreleased
 
 
+## 0.0.28 (2025-04-21)
+
+### Highlights for users
+
+* (Android) If you log out of a Zulip account, the app clears that
+  account's notifications. (#1264)
+* Connecting to a very old, unsupported server (Zulip Server 3.x and
+  older) produces a clear error message. (#267)
+* Translation updates, and a new translation: Ukrainian.
+
+
+### Highlights for developers
+
+* The app now gives an error for servers older than 4.0. (#267)
+
+* If you switch from a later version of the app to a commit in a
+  certain range (2365bb3f2..f03630805^, 23 commits), then the
+  database schema downgrade will fail.  See issue for workaround.
+  (#1427)
+
+* Resolved: #1427, #1409, #267, #1264
+
+
 ## 0.0.27 (2025-03-17)
 
 ### Highlights for users
@@ -29,7 +52,7 @@
 * Resolved: #277, part of #1210, #1319, #1358, #1130, #1247, #737,
   #1246, #1172, #1028, #1016, PR #1380, #1178, #59, #1356, #973,
   PR #1315, #913, #1225, #1357, #1226, #1216, #1354, #1254, #415,
-  #1402, #1401, #1228, part of #901
+  #1402, #1401, #1228, #901
 
 
 ## 0.0.26 (2025-02-07)

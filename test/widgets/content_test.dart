@@ -22,6 +22,7 @@ import '../example_data.dart' as eg;
 import '../flutter_checks.dart';
 import '../model/binding.dart';
 import '../model/content_test.dart';
+import '../model/store_checks.dart';
 import '../model/test_store.dart';
 import '../stdlib_checks.dart';
 import '../test_images.dart';
@@ -553,7 +554,113 @@ void main() {
       styleFinder: (tester) => mergedStyleOf(tester, 'A')!);
   });
 
-  testContentSmoke(ContentExample.mathBlock);
+  group('MathBlock', () {
+    testContentSmoke(ContentExample.mathBlock);
+
+    testWidgets('displays KaTeX source; experimental flag default', (tester) async {
+      await prepareContent(tester, plainContent(ContentExample.mathBlock.html));
+      tester.widget(find.text(r'\lambda', findRichText: true));
+    });
+
+    testWidgets('displays KaTeX content; experimental flag enabled', (tester) async {
+      addTearDown(testBinding.reset);
+      final globalSettings = testBinding.globalStore.settings;
+      await globalSettings.setBool(BoolGlobalSetting.renderKatex, true);
+      check(globalSettings).getBool(BoolGlobalSetting.renderKatex).isTrue();
+
+      await prepareContent(tester, plainContent(ContentExample.mathBlock.html));
+      tester.widget(find.text('λ', findRichText: true));
+    });
+
+    void checkKatexText(
+      WidgetTester tester,
+      String text, {
+      required String fontFamily,
+      required double fontSize,
+      required double fontHeight,
+    }) {
+      check(mergedStyleOf(tester, text)).isNotNull()
+        ..fontFamily.equals(fontFamily)
+        ..fontSize.equals(fontSize);
+      check(tester.getSize(find.text(text)))
+        .height.isCloseTo(fontSize * fontHeight, 0.5);
+    }
+
+    testWidgets('displays KaTeX content with different sizing', (tester) async {
+      addTearDown(testBinding.reset);
+      final globalSettings = testBinding.globalStore.settings;
+      await globalSettings.setBool(BoolGlobalSetting.renderKatex, true);
+      check(globalSettings).getBool(BoolGlobalSetting.renderKatex).isTrue();
+
+      final content = ContentExample.mathBlockKatexSizing;
+      await prepareContent(tester, plainContent(content.html));
+
+      final mathBlockNode = content.expectedNodes.single as MathBlockNode;
+      final baseNode = mathBlockNode.nodes!.single;
+      final nodes = baseNode.nodes!.skip(1); // Skip .strut node.
+      for (final katexNode in nodes) {
+        final fontSize = katexNode.styles.fontSizeEm! * kBaseKatexTextStyle.fontSize!;
+        checkKatexText(tester, katexNode.text!,
+          fontFamily: 'KaTeX_Main',
+          fontSize: fontSize,
+          fontHeight: kBaseKatexTextStyle.height!);
+      }
+    });
+
+    testWidgets('displays KaTeX content with nested sizing', (tester) async {
+      addTearDown(testBinding.reset);
+      final globalSettings = testBinding.globalStore.settings;
+      await globalSettings.setBool(BoolGlobalSetting.renderKatex, true);
+      check(globalSettings).getBool(BoolGlobalSetting.renderKatex).isTrue();
+
+      final content = ContentExample.mathBlockKatexNestedSizing;
+      await prepareContent(tester, plainContent(content.html));
+
+      var fontSize = 0.5 * kBaseKatexTextStyle.fontSize!;
+      checkKatexText(tester, '1',
+        fontFamily: 'KaTeX_Main',
+        fontSize: fontSize,
+        fontHeight: kBaseKatexTextStyle.height!);
+
+      fontSize = 4.976 * fontSize;
+      checkKatexText(tester, '2',
+        fontFamily: 'KaTeX_Main',
+        fontSize: fontSize,
+        fontHeight: kBaseKatexTextStyle.height!);
+    });
+
+    testWidgets('displays KaTeX content with different delimiter sizing', (tester) async {
+      addTearDown(testBinding.reset);
+      final globalSettings = testBinding.globalStore.settings;
+      await globalSettings.setBool(BoolGlobalSetting.renderKatex, true);
+      check(globalSettings).getBool(BoolGlobalSetting.renderKatex).isTrue();
+
+      final content = ContentExample.mathBlockKatexDelimSizing;
+      await prepareContent(tester, plainContent(content.html));
+
+      final mathBlockNode = content.expectedNodes.single as MathBlockNode;
+      final baseNode = mathBlockNode.nodes!.single;
+      var nodes = baseNode.nodes!.skip(1); // Skip .strut node.
+
+      final fontSize = kBaseKatexTextStyle.fontSize!;
+
+      final firstNode = nodes.first;
+      checkKatexText(tester, firstNode.text!,
+        fontFamily: 'KaTeX_Main',
+        fontSize: fontSize,
+        fontHeight: kBaseKatexTextStyle.height!);
+      nodes = nodes.skip(1);
+
+      for (var katexNode in nodes) {
+        katexNode = katexNode.nodes!.single; // Skip empty .mord parent.
+        final fontFamily = katexNode.styles.fontFamily!;
+        checkKatexText(tester, katexNode.text!,
+          fontFamily: fontFamily,
+          fontSize: fontSize,
+          fontHeight: kBaseKatexTextStyle.height!);
+      }
+    });
+  });
 
   /// Make a [TargetFontSizeFinder] to pass to [checkFontSizeRatio],
   /// from a target [Pattern] (such as a string).
@@ -968,6 +1075,21 @@ void main() {
       await checkFontSizeRatio(tester,
         targetHtml: html,
         targetFontSizeFinder: mkTargetFontSizeFinderFromPattern(r'\lambda'));
+    });
+
+    testWidgets('displays KaTeX source; experimental flag default', (tester) async {
+      await prepareContent(tester, plainContent(ContentExample.mathInline.html));
+      tester.widget(find.text(r'\lambda', findRichText: true));
+    });
+
+    testWidgets('displays KaTeX content; experimental flag enabled', (tester) async {
+      addTearDown(testBinding.reset);
+      final globalSettings = testBinding.globalStore.settings;
+      await globalSettings.setBool(BoolGlobalSetting.renderKatex, true);
+      check(globalSettings.getBool(BoolGlobalSetting.renderKatex)).isTrue();
+
+      await prepareContent(tester, plainContent(ContentExample.mathInline.html));
+      tester.widget(find.text('λ', findRichText: true));
     });
   });
 

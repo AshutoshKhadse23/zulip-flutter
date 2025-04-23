@@ -327,6 +327,96 @@ abstract class GlobalStore extends ChangeNotifier {
 
 class AccountNotFoundException implements Exception {}
 
+/// A bundle of items that are useful to [PerAccountStore] and its substores.
+///
+/// Each instance of this class is constructed as part of constructing a
+/// [PerAccountStore] instance,
+/// and is shared by that [PerAccountStore] and its substores.
+/// Calling [PerAccountStore.dispose] also disposes the [CorePerAccountStore]
+/// (for example, it calls [ApiConnection.dispose] on [connection]).
+class CorePerAccountStore {
+  CorePerAccountStore._({
+    required GlobalStore globalStore,
+    required this.connection,
+    required this.queueId,
+    required this.accountId,
+    required this.selfUserId,
+  }) : _globalStore = globalStore,
+       assert(connection.realmUrl == globalStore.getAccount(accountId)!.realmUrl);
+
+  final GlobalStore _globalStore;
+  final ApiConnection connection; // TODO(#135): update zulipFeatureLevel with events
+  final String queueId;
+  final int accountId;
+
+  // This isn't strictly needed as a field; it could be a getter
+  // that uses `_globalStore.getAccount(accountId)`.
+  // But we denormalize it here to save a hash-table lookup every time
+  // the self-user ID is needed, which can be often.
+  // It never changes on the account; see [GlobalStore.updateAccount].
+  final int selfUserId;
+}
+
+/// A base class for [PerAccountStore] and its substores,
+/// with getters providing the items in [CorePerAccountStore].
+abstract class PerAccountStoreBase {
+  PerAccountStoreBase({required CorePerAccountStore core})
+    : _core = core;
+
+  final CorePerAccountStore _core;
+
+  ////////////////////////////////
+  // Where data comes from in the first place.
+
+  GlobalStore get _globalStore => _core._globalStore;
+
+  ApiConnection get connection => _core.connection;
+
+  String get queueId => _core.queueId;
+
+  ////////////////////////////////
+  // Data attached to the realm or the server.
+
+  /// Always equal to `account.realmUrl` and `connection.realmUrl`.
+  Uri get realmUrl => connection.realmUrl;
+
+  /// Resolve [reference] as a URL relative to [realmUrl].
+  ///
+  /// This returns null if [reference] fails to parse as a URL.
+  Uri? tryResolveUrl(String reference) => _tryResolveUrl(realmUrl, reference);
+
+  ////////////////////////////////
+  // Data attached to the self-account on the realm.
+
+  int get accountId => _core.accountId;
+
+  /// The [Account] this store belongs to.
+  ///
+  /// Will throw if the account has been removed from the global store,
+  /// which is possible only if [PerAccountStore.dispose] has been called
+  /// on this store.
+  Account get account => _globalStore.getAccount(accountId)!;
+
+  /// The user ID of the "self-user",
+  /// i.e. the account the person using this app is logged into.
+  ///
+  /// This always equals the [Account.userId] on [account].
+  ///
+  /// For the corresponding [User] object, see [UserStore.selfUser].
+  int get selfUserId => _core.selfUserId;
+}
+
+const _tryResolveUrl = tryResolveUrl;
+
+/// Like [Uri.resolve], but on failure return null instead of throwing.
+Uri? tryResolveUrl(Uri baseUrl, String reference) {
+  try {
+    return baseUrl.resolve(reference);
+  } on FormatException {
+    return null;
+  }
+}
+
 /// Store for the user's data for a given Zulip account.
 ///
 /// This should always have a consistent snapshot of the state on the server,
@@ -335,7 +425,7 @@ class AccountNotFoundException implements Exception {}
 /// This class does not attempt to poll an event queue
 /// to keep the data up to date.  For that behavior, see
 /// [UpdateMachine].
-class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, ChannelStore, MessageStore {
+class PerAccountStore extends PerAccountStoreBase with ChangeNotifier, EmojiStore, UserStore, ChannelStore, MessageStore {
   /// Construct a store for the user's data, starting from the given snapshot.
   ///
   /// The global store must already have been updated with
@@ -360,65 +450,73 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
     connection ??= globalStore.apiConnectionFromAccount(account);
     assert(connection.zulipFeatureLevel == account.zulipFeatureLevel);
 
-    final realmUrl = account.realmUrl;
-    final channels = ChannelStoreImpl(initialSnapshot: initialSnapshot);
-    return PerAccountStore._(
+    final queueId = initialSnapshot.queueId;
+    if (queueId == null) {
+      // The queueId is optional in the type, but should only be missing in the
+      // case of unauthenticated access to a web-public realm.  We authenticated.
+      throw Exception("bad initial snapshot: missing queueId");
+    }
+
+    final core = CorePerAccountStore._(
       globalStore: globalStore,
       connection: connection,
-      realmUrl: realmUrl,
+      queueId: queueId,
+      accountId: accountId,
+      selfUserId: account.userId,
+    );
+    final channels = ChannelStoreImpl(initialSnapshot: initialSnapshot);
+    return PerAccountStore._(
+      core: core,
       realmWildcardMentionPolicy: initialSnapshot.realmWildcardMentionPolicy,
       realmMandatoryTopics: initialSnapshot.realmMandatoryTopics,
       realmWaitingPeriodThreshold: initialSnapshot.realmWaitingPeriodThreshold,
       maxFileUploadSizeMib: initialSnapshot.maxFileUploadSizeMib,
       realmEmptyTopicDisplayName: initialSnapshot.realmEmptyTopicDisplayName,
+      realmAllowMessageEditing: initialSnapshot.realmAllowMessageEditing,
+      realmMessageContentEditLimitSeconds: initialSnapshot.realmMessageContentEditLimitSeconds,
       realmDefaultExternalAccounts: initialSnapshot.realmDefaultExternalAccounts,
       customProfileFields: _sortCustomProfileFields(initialSnapshot.customProfileFields),
       emailAddressVisibility: initialSnapshot.emailAddressVisibility,
       emoji: EmojiStoreImpl(
-        realmUrl: realmUrl, allRealmEmoji: initialSnapshot.realmEmoji),
-      accountId: accountId,
+        core: core, allRealmEmoji: initialSnapshot.realmEmoji),
       userSettings: initialSnapshot.userSettings,
       typingNotifier: TypingNotifier(
-        connection: connection,
+        core: core,
         typingStoppedWaitPeriod: Duration(
           milliseconds: initialSnapshot.serverTypingStoppedWaitPeriodMilliseconds),
         typingStartedWaitPeriod: Duration(
           milliseconds: initialSnapshot.serverTypingStartedWaitPeriodMilliseconds),
       ),
-      users: UserStoreImpl(
-        selfUserId: account.userId,
-        initialSnapshot: initialSnapshot),
-      typingStatus: TypingStatus(
-        selfUserId: account.userId,
+      users: UserStoreImpl(core: core, initialSnapshot: initialSnapshot),
+      typingStatus: TypingStatus(core: core,
         typingStartedExpiryPeriod: Duration(milliseconds: initialSnapshot.serverTypingStartedExpiryPeriodMilliseconds),
       ),
       channels: channels,
-      messages: MessageStoreImpl(),
+      messages: MessageStoreImpl(core: core),
       unreads: Unreads(
         initial: initialSnapshot.unreadMsgs,
-        selfUserId: account.userId,
+        core: core,
         channelStore: channels,
       ),
-      recentDmConversationsView: RecentDmConversationsView(
-        initial: initialSnapshot.recentPrivateConversations, selfUserId: account.userId),
+      recentDmConversationsView: RecentDmConversationsView(core: core,
+        initial: initialSnapshot.recentPrivateConversations),
       recentSenders: RecentSenders(),
     );
   }
 
   PerAccountStore._({
-    required GlobalStore globalStore,
-    required this.connection,
-    required this.realmUrl,
+    required super.core,
     required this.realmWildcardMentionPolicy,
     required this.realmMandatoryTopics,
     required this.realmWaitingPeriodThreshold,
     required this.maxFileUploadSizeMib,
     required String? realmEmptyTopicDisplayName,
+    required this.realmAllowMessageEditing,
+    required this.realmMessageContentEditLimitSeconds,
     required this.realmDefaultExternalAccounts,
     required this.customProfileFields,
     required this.emailAddressVisibility,
     required EmojiStoreImpl emoji,
-    required this.accountId,
     required this.userSettings,
     required this.typingNotifier,
     required UserStoreImpl users,
@@ -428,11 +526,7 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
     required this.unreads,
     required this.recentDmConversationsView,
     required this.recentSenders,
-  }) : assert(realmUrl == globalStore.getAccount(accountId)!.realmUrl),
-       assert(realmUrl == connection.realmUrl),
-       assert(emoji.realmUrl == realmUrl),
-       _globalStore = globalStore,
-       _realmEmptyTopicDisplayName = realmEmptyTopicDisplayName,
+  }) : _realmEmptyTopicDisplayName = realmEmptyTopicDisplayName,
        _emoji = emoji,
        _users = users,
        _channels = channels,
@@ -443,9 +537,6 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
 
   ////////////////////////////////
   // Where data comes from in the first place.
-
-  final GlobalStore _globalStore;
-  final ApiConnection connection; // TODO(#135): update zulipFeatureLevel with events
 
   UpdateMachine? get updateMachine => _updateMachine;
   UpdateMachine? _updateMachine;
@@ -467,14 +558,6 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
   ////////////////////////////////
   // Data attached to the realm or the server.
 
-  /// Always equal to `account.realmUrl` and `connection.realmUrl`.
-  final Uri realmUrl;
-
-  /// Resolve [reference] as a URL relative to [realmUrl].
-  ///
-  /// This returns null if [reference] fails to parse as a URL.
-  Uri? tryResolveUrl(String reference) => _tryResolveUrl(realmUrl, reference);
-
   /// Always equal to `connection.zulipFeatureLevel`
   /// and `account.zulipFeatureLevel`.
   int get zulipFeatureLevel => connection.zulipFeatureLevel!;
@@ -484,6 +567,8 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
   final bool realmMandatoryTopics;  // TODO(#668): update this realm setting
   /// For docs, please see [InitialSnapshot.realmWaitingPeriodThreshold].
   final int realmWaitingPeriodThreshold;  // TODO(#668): update this realm setting
+  final bool realmAllowMessageEditing; // TODO(#668): update this realm setting
+  final int? realmMessageContentEditLimitSeconds; // TODO(#668): update this realm setting
   final int maxFileUploadSizeMib; // No event for this.
 
   /// The display name to use for empty topics.
@@ -532,22 +617,12 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
   ////////////////////////////////
   // Data attached to the self-account on the realm.
 
-  final int accountId;
-
-  /// The [Account] this store belongs to.
-  ///
-  /// Will throw if called after [dispose] has been called.
-  Account get account => _globalStore.getAccount(accountId)!;
-
   final UserSettings? userSettings; // TODO(server-5)
 
   final TypingNotifier typingNotifier;
 
   ////////////////////////////////
   // Users and data about them.
-
-  @override
-  int get selfUserId => _users.selfUserId;
 
   @override
   User? getUser(int userId) => _users.getUser(userId);
@@ -829,16 +904,10 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
     }
   }
 
+  @override
   Future<void> sendMessage({required MessageDestination destination, required String content}) {
     assert(!_disposed);
-
-    // TODO implement outbox; see design at
-    //   https://chat.zulip.org/#narrow/stream/243-mobile-team/topic/.23M3881.20Sending.20outbox.20messages.20is.20fraught.20with.20issues/near/1405739
-    return _apiSendMessage(connection,
-      destination: destination,
-      content: content,
-      readBySender: true,
-    );
+    return _messages.sendMessage(destination: destination, content: content);
   }
 
   static List<CustomProfileField> _sortCustomProfileFields(List<CustomProfileField> initialCustomProfileFields) {
@@ -858,18 +927,6 @@ class PerAccountStore extends ChangeNotifier with EmojiStore, UserStore, Channel
 
   @override
   String toString() => '${objectRuntimeType(this, 'PerAccountStore')}#${shortHash(this)}';
-}
-
-const _apiSendMessage = sendMessage; // Bit ugly; for alternatives, see: https://chat.zulip.org/#narrow/stream/243-mobile-team/topic/flutter.3A.20PerAccountStore.20methods/near/1545809
-const _tryResolveUrl = tryResolveUrl;
-
-/// Like [Uri.resolve], but on failure return null instead of throwing.
-Uri? tryResolveUrl(Uri baseUrl, String reference) {
-  try {
-    return baseUrl.resolve(reference);
-  } on FormatException {
-    return null;
-  }
 }
 
 /// A [GlobalStoreBackend] that uses a live, persistent local database.
@@ -1031,12 +1088,7 @@ class UpdateMachine {
   UpdateMachine.fromInitialSnapshot({
     required this.store,
     required InitialSnapshot initialSnapshot,
-  }) : queueId = initialSnapshot.queueId ?? (() {
-         // The queueId is optional in the type, but should only be missing in the
-         // case of unauthenticated access to a web-public realm.  We authenticated.
-         throw Exception("bad initial snapshot: missing queueId");
-       })(),
-       lastEventId = initialSnapshot.lastEventId {
+  }) : lastEventId = initialSnapshot.lastEventId {
     store.updateMachine = this;
   }
 
@@ -1110,7 +1162,6 @@ class UpdateMachine {
   }
 
   final PerAccountStore store;
-  final String queueId;
   int lastEventId;
 
   bool _disposed = false;
@@ -1260,7 +1311,7 @@ class UpdateMachine {
         final GetEventsResult result;
         try {
           result = await getEvents(store.connection,
-            queueId: queueId, lastEventId: lastEventId);
+            queueId: store.queueId, lastEventId: lastEventId);
           if (_disposed) return;
         } catch (e, stackTrace) {
           if (_disposed) return;

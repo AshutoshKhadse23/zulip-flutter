@@ -19,25 +19,41 @@ Widget _dialogActionText(String text) {
 
 /// Tracks the status of a dialog, in being still open or already closed.
 ///
+/// Use [T] to identify the outcome of the interaction:
+/// - Pass `void` for an informational dialog with just the option to dismiss.
+/// - For confirmation dialogs with an option to dismiss
+///   plus an option to proceed with an action, pass `bool`.
+///   The action button should pass true for Navigator.pop's `result` argument.
+/// - For dialogs with an option to dismiss plus multiple other options,
+///   pass a custom enum.
+/// For the latter two cases, a cancel button should call Navigator.pop
+/// with null for the `result` argument, to match what Flutter does
+/// when you dismiss the dialog by tapping outside its area.
+///
 /// See also:
 ///  * [showDialog], whose return value this class is intended to wrap.
-class DialogStatus {
-  const DialogStatus(this.closed);
+class DialogStatus<T> {
+  const DialogStatus(this.result);
 
   /// Resolves when the dialog is closed.
-  final Future<void> closed;
+  ///
+  /// If this completes with null, the dialog was dismissed.
+  /// Otherwise, completes with a [T] identifying the interaction's outcome.
+  ///
+  /// See, e.g., [showSuggestedActionDialog].
+  final Future<T?> result;
 }
 
 /// Displays an [AlertDialog] with a dismiss button
 /// and optional "Learn more" button.
 ///
-/// The [DialogStatus.closed] field of the return value can be used
+/// The [DialogStatus.result] field of the return value can be used
 /// for waiting for the dialog to be closed.
 // This API is inspired by [ScaffoldManager.showSnackBar].  We wrap
 // [showDialog]'s return value, a [Future], inside [DialogStatus]
 // whose documentation can be accessed.  This helps avoid confusion when
 // intepreting the meaning of the [Future].
-DialogStatus showErrorDialog({
+DialogStatus<void> showErrorDialog({
   required BuildContext context,
   required String title,
   String? message,
@@ -61,28 +77,31 @@ DialogStatus showErrorDialog({
   return DialogStatus(future);
 }
 
-void showSuggestedActionDialog({
+/// Displays an alert dialog with a cancel button and an action button.
+///
+/// The [DialogStatus.result] Future gives true if the action button was tapped.
+/// If the dialog was canceled,
+/// either with the cancel button or by tapping outside the dialog's area,
+/// it completes with null.
+DialogStatus<bool> showSuggestedActionDialog({
   required BuildContext context,
   required String title,
   required String message,
   required String? actionButtonText,
-  required VoidCallback onActionButtonPress,
 }) {
   final zulipLocalizations = ZulipLocalizations.of(context);
-  showDialog<void>(
+  final future = showDialog<bool>(
     context: context,
     builder: (BuildContext context) => AlertDialog(
       title: Text(title),
       content: SingleChildScrollView(child: Text(message)),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: () => Navigator.pop<bool>(context, null),
           child: _dialogActionText(zulipLocalizations.dialogCancel)),
         TextButton(
-          onPressed: () {
-            onActionButtonPress();
-            Navigator.pop(context);
-          },
+          onPressed: () => Navigator.pop<bool>(context, true),
           child: _dialogActionText(actionButtonText ?? zulipLocalizations.dialogContinue)),
       ]));
+  return DialogStatus(future);
 }

@@ -1,11 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:html/dom.dart' as dom;
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' as intl;
 
 import '../api/core.dart';
 import '../api/model/model.dart';
@@ -13,6 +14,7 @@ import '../generated/l10n/zulip_localizations.dart';
 import '../model/avatar_url.dart';
 import '../model/content.dart';
 import '../model/internal_link.dart';
+import '../model/katex.dart';
 import 'actions.dart';
 import 'code_block.dart';
 import 'dialog.dart';
@@ -804,11 +806,135 @@ class MathBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final contentTheme = ContentTheme.of(context);
-    return _CodeBlockContainer(
-      borderColor: contentTheme.colorMathBlockBorder,
-      child: Text.rich(TextSpan(
-        style: contentTheme.codeBlockTextStyles.plain,
-        children: [TextSpan(text: node.texSource)])));
+
+    final nodes = node.nodes;
+    if (nodes == null) {
+      return _CodeBlockContainer(
+        borderColor: contentTheme.colorMathBlockBorder,
+        child: Text.rich(TextSpan(
+          style: contentTheme.codeBlockTextStyles.plain,
+          children: [TextSpan(text: node.texSource)])));
+    }
+
+    return _Katex(inline: false, nodes: nodes);
+  }
+}
+
+// Base text style from .katex class in katex.scss :
+//   https://github.com/KaTeX/KaTeX/blob/613c3da8/src/styles/katex.scss#L13-L15
+const kBaseKatexTextStyle = TextStyle(
+  fontSize: kBaseFontSize * 1.21,
+  fontFamily: 'KaTeX_Main',
+  height: 1.2);
+
+class _Katex extends StatelessWidget {
+  const _Katex({
+    required this.inline,
+    required this.nodes,
+  });
+
+  final bool inline;
+  final List<KatexNode> nodes;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget widget = Text.rich(TextSpan(
+      children: List.unmodifiable(nodes.map((e) {
+        return WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: _KatexSpan(e));
+      }))));
+
+    if (!inline) {
+      widget = Center(
+        child: SingleChildScrollViewWithScrollbar(
+          scrollDirection: Axis.horizontal,
+          child: widget));
+    }
+
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: DefaultTextStyle(
+        style: kBaseKatexTextStyle.copyWith(
+          color: ContentTheme.of(context).textStylePlainParagraph.color),
+        child: widget));
+  }
+}
+
+class _KatexSpan extends StatelessWidget {
+  const _KatexSpan(this.span);
+
+  final KatexNode span;
+
+  @override
+  Widget build(BuildContext context) {
+    final em = DefaultTextStyle.of(context).style.fontSize!;
+
+    Widget widget = const SizedBox.shrink();
+    if (span.text != null) {
+      widget = Text(span.text!);
+    } else if (span.nodes != null && span.nodes!.isNotEmpty) {
+      widget = Text.rich(TextSpan(
+        children: List.unmodifiable(span.nodes!.map((e) {
+          return WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: _KatexSpan(e));
+        }))));
+    }
+
+    final styles = span.styles;
+
+    final fontFamily = styles.fontFamily;
+    final fontSize = switch (styles.fontSizeEm) {
+      double fontSizeEm => fontSizeEm * em,
+      null => null,
+    };
+    final fontWeight = switch (styles.fontWeight) {
+      KatexSpanFontWeight.bold => FontWeight.bold,
+      null => null,
+    };
+    var fontStyle = switch (styles.fontStyle) {
+      KatexSpanFontStyle.normal => FontStyle.normal,
+      KatexSpanFontStyle.italic => FontStyle.italic,
+      null => null,
+    };
+
+    TextStyle? textStyle;
+    if (fontFamily != null ||
+        fontSize != null ||
+        fontWeight != null ||
+        fontStyle != null) {
+      // TODO(upstream) remove this workaround when upstream fixes the broken
+      //   rendering of KaTeX_Math font with italic font style on Android:
+      //     https://github.com/flutter/flutter/issues/167474
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          fontFamily == 'KaTeX_Math') {
+        fontStyle = FontStyle.normal;
+      }
+
+      textStyle = TextStyle(
+        fontFamily: fontFamily,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+      );
+    }
+    final textAlign = switch (styles.textAlign) {
+      KatexSpanTextAlign.left => TextAlign.left,
+      KatexSpanTextAlign.center => TextAlign.center,
+      KatexSpanTextAlign.right => TextAlign.right,
+      null => null,
+    };
+
+    if (textStyle != null || textAlign != null) {
+      widget = DefaultTextStyle.merge(
+        style: textStyle,
+        textAlign: textAlign,
+        child: widget);
+    }
+    return widget;
   }
 }
 
@@ -1120,11 +1246,17 @@ class _InlineContentBuilder {
           child: MessageImageEmoji(node: node));
 
       case MathInlineNode():
-        return TextSpan(
-          style: widget.style
-            .merge(ContentTheme.of(_context!).textStyleInlineMath)
-            .apply(fontSizeFactor: kInlineCodeFontSizeFactor),
-          children: [TextSpan(text: node.texSource)]);
+        final nodes = node.nodes;
+        return nodes == null
+          ? TextSpan(
+              style: widget.style
+                .merge(ContentTheme.of(_context!).textStyleInlineMath)
+                .apply(fontSizeFactor: kInlineCodeFontSizeFactor),
+              children: [TextSpan(text: node.texSource)])
+          : WidgetSpan(
+              alignment: PlaceholderAlignment.baseline,
+              baseline: TextBaseline.alphabetic,
+              child: _Katex(inline: true, nodes: nodes));
 
       case GlobalTimeNode():
         return WidgetSpan(alignment: PlaceholderAlignment.middle,
@@ -1283,7 +1415,7 @@ class GlobalTime extends StatelessWidget {
   final GlobalTimeNode node;
   final TextStyle ambientTextStyle;
 
-  static final _dateFormat = DateFormat('EEE, MMM d, y, h:mm a'); // TODO(i18n): localize date
+  static final _dateFormat = intl.DateFormat('EEE, MMM d, y, h:mm a'); // TODO(i18n): localize date
 
   @override
   Widget build(BuildContext context) {
