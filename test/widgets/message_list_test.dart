@@ -136,20 +136,20 @@ void main() {
       check(state.narrow).equals(ChannelNarrow(stream.streamId));
     });
 
-    testWidgets('composeBoxController finds compose box', (tester) async {
+    testWidgets('composeBoxState finds compose box', (tester) async {
       final stream = eg.stream();
       await setupMessageListPage(tester, narrow: ChannelNarrow(stream.streamId),
         streams: [stream],
         messages: [eg.streamMessage(stream: stream, content: "<p>a message</p>")]);
       final state = MessageListPage.ancestorOf(tester.element(find.text("a message")));
-      check(state.composeBoxController).isNotNull();
+      check(state.composeBoxState).isNotNull();
     });
 
-    testWidgets('composeBoxController null when no compose box', (tester) async {
+    testWidgets('composeBoxState null when no compose box', (tester) async {
       await setupMessageListPage(tester, narrow: const CombinedFeedNarrow(),
         messages: [eg.streamMessage(content: "<p>a message</p>")]);
       final state = MessageListPage.ancestorOf(tester.element(find.text("a message")));
-      check(state.composeBoxController).isNull();
+      check(state.composeBoxState).isNull();
     });
 
     testWidgets('dispose MessageListView when event queue expired', (tester) async {
@@ -256,7 +256,7 @@ void main() {
       // Verify this message list lacks a compose box.
       // (The original bug wouldn't reproduce with a compose box present.)
       final state = MessageListPage.ancestorOf(tester.element(find.text("verb\natim")));
-      check(state.composeBoxController).isNull();
+      check(state.composeBoxState).isNull();
 
       final element = tester.element(find.byType(CodeBlock));
       final padding = MediaQuery.of(element).padding;
@@ -375,7 +375,7 @@ void main() {
     testWidgets('basic', (tester) async {
       await setupMessageListPage(tester, foundOldest: false,
         messages: List.generate(300, (i) => eg.streamMessage(id: 950 + i, sender: eg.selfUser)));
-      check(itemCount(tester)).equals(303);
+      check(itemCount(tester)).equals(301);
 
       // Fling-scroll upward...
       await tester.fling(find.byType(MessageListPage), const Offset(0, 300), 8000);
@@ -388,7 +388,7 @@ void main() {
       await tester.pump(Duration.zero); // Allow a frame for the response to arrive.
 
       // Now we have more messages.
-      check(itemCount(tester)).equals(403);
+      check(itemCount(tester)).equals(401);
     });
 
     testWidgets('observe double-fetch glitch', (tester) async {
@@ -429,7 +429,7 @@ void main() {
         ...List.generate(100, (i) => eg.streamMessage(id: 1302 + i)),
       ]);
       final lastRequest = connection.lastRequest;
-      check(itemCount(tester)).equals(404);
+      check(itemCount(tester)).equals(402);
 
       // Fling-scroll upward...
       await tester.fling(find.byType(MessageListPage), const Offset(0, 300), 8000);
@@ -453,6 +453,31 @@ void main() {
     });
   });
 
+  group('scroll position', () {
+    // The scrolling behavior is tested in more detail in the tests of
+    // [MessageListScrollView], in scrolling_test.dart .
+
+    testWidgets('sticks to end upon new message', (tester) async {
+      await setupMessageListPage(tester,
+        messages: List.generate(10, (_) => eg.streamMessage(content: '<p>a</p>')));
+      final controller = findMessageListScrollController(tester)!;
+
+      // Starts at end, and with room to scroll up.
+      check(controller.position)
+        ..extentAfter.equals(0)
+        ..extentBefore.isGreaterThan(0);
+      final oldPosition = controller.position.pixels;
+
+      // On new message, position remains at end…
+      await store.addMessage(eg.streamMessage(content: '<p>a</p><p>b</p>'));
+      await tester.pump();
+      check(controller.position)
+        ..extentAfter.equals(0)
+        // … even though that means a bigger number now.
+        ..pixels.isGreaterThan(oldPosition);
+    });
+  });
+
   group('ScrollToBottomButton interactions', () {
     bool isButtonVisible(WidgetTester tester) {
       return tester.any(find.descendant(
@@ -462,59 +487,94 @@ void main() {
 
     testWidgets('scrolling changes visibility', (tester) async {
       await setupMessageListPage(tester, messageCount: 10);
-
-      final scrollController = findMessageListScrollController(tester)!;
-
-      // Initial state should be not visible, as the message list renders with latest message in view
+      // Scroll position starts at the end, so button hidden.
+      final controller = findMessageListScrollController(tester)!;
+      check(controller.position).extentAfter.equals(0);
       check(isButtonVisible(tester)).equals(false);
 
-      scrollController.jumpTo(-600);
+      // Scrolling up, button becomes visible.
+      controller.jumpTo(-600);
       await tester.pump();
+      check(controller.position).extentAfter.isGreaterThan(0);
       check(isButtonVisible(tester)).equals(true);
 
-      scrollController.jumpTo(0);
+      // Scrolling back down to end, button becomes hidden again.
+      controller.jumpTo(controller.position.maxScrollExtent);
       await tester.pump();
+      check(controller.position).extentAfter.equals(0);
       check(isButtonVisible(tester)).equals(false);
     });
 
     testWidgets('dimension updates changes visibility', (tester) async {
       await setupMessageListPage(tester, messageCount: 100);
 
-      final scrollController = findMessageListScrollController(tester)!;
-
-      // Initial state should be not visible, as the message list renders with latest message in view
-      check(isButtonVisible(tester)).equals(false);
-
-      scrollController.jumpTo(-600);
+      // Scroll up, to hide the button.
+      final controller = findMessageListScrollController(tester)!;
+      controller.jumpTo(-600);
       await tester.pump();
       check(isButtonVisible(tester)).equals(true);
 
+      // Make the view taller, so that the bottom of the list is back in view.
       addTearDown(tester.view.resetPhysicalSize);
       tester.view.physicalSize = const Size(2000, 40000);
       await tester.pump();
-      // Dimension changes use NotificationListener<ScrollMetricsNotification
-      // which has a one frame lag. If that ever gets resolved this extra pump
-      // would ideally be removed
+      // (Dimension changes use NotificationListener<ScrollMetricsNotification>
+      // which has a one-frame lag.  If that ever gets resolved,
+      // this extra pump would ideally be removed.)
       await tester.pump();
+      // Check the button duly disappears again.
       check(isButtonVisible(tester)).equals(false);
     });
 
-    testWidgets('button functionality', (tester) async {
+    testWidgets('button works', (tester) async {
       await setupMessageListPage(tester, messageCount: 10);
-
-      final scrollController = findMessageListScrollController(tester)!;
-
-      // Initial state should be not visible, as the message list renders with latest message in view
-      check(isButtonVisible(tester)).equals(false);
-
-      scrollController.jumpTo(-600);
+      final controller = findMessageListScrollController(tester)!;
+      controller.jumpTo(-600);
       await tester.pump();
-      check(isButtonVisible(tester)).equals(true);
+      check(controller.position).extentAfter.isGreaterOrEqual(600);
 
+      // Tap button.
       await tester.tap(find.byType(ScrollToBottomButton));
+      // The list scrolls to the end…
       await tester.pumpAndSettle();
+      check(controller.position).extentAfter.equals(0);
+      // … and for good measure confirm the button disappeared.
       check(isButtonVisible(tester)).equals(false);
-      check(scrollController.position.pixels).equals(0);
+    });
+
+    testWidgets('scrolls at reasonable, constant speed', (tester) async {
+      const maxSpeed = 8000.0;
+      const distance = 40000.0;
+      await setupMessageListPage(tester, messageCount: 1000);
+      final controller = findMessageListScrollController(tester)!;
+
+      // Scroll a long distance up, many screenfuls.
+      controller.jumpTo(-distance);
+      await tester.pump();
+      check(controller.position).pixels.equals(-distance);
+
+      // Tap button.
+      await tester.tap(find.byType(ScrollToBottomButton));
+      await tester.pump();
+
+      // Measure speed.
+      final log = <double>[];
+      double pos = controller.position.pixels;
+      while (pos < 0) {
+        check(log.length).isLessThan(30);
+        await tester.pump(const Duration(seconds: 1));
+        final lastPos = pos;
+        pos = controller.position.pixels;
+        log.add(pos - lastPos);
+      }
+      // Check the main question: the speed was as expected throughout.
+      check(log.slice(0, log.length-1)).every((it) => it.equals(maxSpeed));
+      check(log).last..isGreaterThan(0)..isLessOrEqual(maxSpeed);
+
+      // Also check the test's assumptions: the scroll reached the end…
+      check(pos).equals(0);
+      // … and scrolled far enough to effectively test the max speed.
+      check(log.sum).isGreaterThan(2 * maxSpeed);
     });
   });
 
@@ -1455,8 +1515,15 @@ void main() {
       // as the number of items changes in MessageList. See
       // `findChildIndexCallback` passed into [SliverStickyHeaderList]
       // at [_MessageListState._buildListView].
+
+      // TODO(#82): Cut paddingMessage.  It's there to paper over a glitch:
+      //   the _UnreadMarker animation *does* get interrupted in the case where
+      //   the message gets pushed from one sliver to the other.  See:
+      //     https://github.com/zulip/zulip-flutter/pull/1436#issuecomment-2756738779
+      //   That case will no longer exist when #82 is complete.
       final message = eg.streamMessage(flags: []);
-      await setupMessageListPage(tester, messages: [message]);
+      final paddingMessage = eg.streamMessage();
+      await setupMessageListPage(tester, messages: [message, paddingMessage]);
       check(getAnimation(tester, message.id))
         ..value.equals(1.0)
         ..status.equals(AnimationStatus.dismissed);
@@ -1480,10 +1547,11 @@ void main() {
         ..status.equals(AnimationStatus.forward);
 
       // introduce new message
+      check(find.byType(MessageItem)).findsExactly(2);
       final newMessage = eg.streamMessage(flags:[MessageFlag.read]);
-      await store.handleEvent(eg.messageEvent(newMessage));
+      await store.addMessage(newMessage);
       await tester.pump(); // process handleEvent
-      check(find.byType(MessageItem).evaluate()).length.equals(2);
+      check(find.byType(MessageItem)).findsExactly(3);
       check(getAnimation(tester, message.id))
         ..value.isGreaterThan(0.0)
         ..value.isLessThan(1.0)

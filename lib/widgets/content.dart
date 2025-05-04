@@ -651,6 +651,7 @@ class MessageImage extends StatelessWidget {
         Navigator.of(context).push(getImageLightboxRoute(
           context: context,
           message: message,
+          messageImageContext: context,
           src: resolvedSrcUrl,
           thumbnailUrl: resolvedThumbnailUrl,
           originalWidth: node.originalWidth,
@@ -659,7 +660,7 @@ class MessageImage extends StatelessWidget {
       child: node.loading
         ? const CupertinoActivityIndicator()
         : resolvedSrcUrl == null ? null : LightboxHero(
-            message: message,
+            messageImageContext: context,
             src: resolvedSrcUrl,
             child: RealmContentNetworkImage(
               resolvedThumbnailUrl ?? resolvedSrcUrl,
@@ -838,13 +839,7 @@ class _Katex extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget widget = Text.rich(TextSpan(
-      children: List.unmodifiable(nodes.map((e) {
-        return WidgetSpan(
-          alignment: PlaceholderAlignment.baseline,
-          baseline: TextBaseline.alphabetic,
-          child: _KatexSpan(e));
-      }))));
+    Widget widget = _KatexNodeList(nodes: nodes);
 
     if (!inline) {
       widget = Center(
@@ -862,29 +857,40 @@ class _Katex extends StatelessWidget {
   }
 }
 
-class _KatexSpan extends StatelessWidget {
-  const _KatexSpan(this.span);
+class _KatexNodeList extends StatelessWidget {
+  const _KatexNodeList({required this.nodes});
 
-  final KatexNode span;
+  final List<KatexNode> nodes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text.rich(TextSpan(
+      children: List.unmodifiable(nodes.map((e) {
+        return WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: _KatexSpan(e));
+      }))));
+  }
+}
+
+class _KatexSpan extends StatelessWidget {
+  const _KatexSpan(this.node);
+
+  final KatexNode node;
 
   @override
   Widget build(BuildContext context) {
     final em = DefaultTextStyle.of(context).style.fontSize!;
 
     Widget widget = const SizedBox.shrink();
-    if (span.text != null) {
-      widget = Text(span.text!);
-    } else if (span.nodes != null && span.nodes!.isNotEmpty) {
-      widget = Text.rich(TextSpan(
-        children: List.unmodifiable(span.nodes!.map((e) {
-          return WidgetSpan(
-            alignment: PlaceholderAlignment.baseline,
-            baseline: TextBaseline.alphabetic,
-            child: _KatexSpan(e));
-        }))));
+    if (node.text != null) {
+      widget = Text(node.text!);
+    } else if (node.nodes != null && node.nodes!.isNotEmpty) {
+      widget = _KatexNodeList(nodes: node.nodes!);
     }
 
-    final styles = span.styles;
+    final styles = node.styles;
 
     final fontFamily = styles.fontFamily;
     final fontSize = switch (styles.fontSizeEm) {
